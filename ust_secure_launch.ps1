@@ -52,7 +52,7 @@ $SecureToken = ConvertTo-SecureString $SmtpToken -AsPlainText -Force
 $SmtpCredential = New-Object System.Management.Automation.PSCredential ($SmtpUsername, $SecureToken)
 
 # Destinataires de l'email (liste pouvant contenir plusieurs adresses)
-$EmailRecipients = @("fabien.chalon@protonmail.com", "fabien.chalon@gmail.com")
+$EmailRecipients = @("destinataire1@example.com", "destinataire2@example.com")
 
 #endregion Paramètres de configuration
 
