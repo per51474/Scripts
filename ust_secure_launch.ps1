@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Exécution de user‑sync.exe en mode test puis en mode normal, avec envoi par email du log complet.
+    Exécution de user‑sync.exe en mode test puis en mode PROD, avec envoi par email du log complet.
 
 .DESCRIPTION
-    - Le script exécute user‑sync.exe en mode test et analyse sa sortie pour extraire le nombre d’utilisateurs "Adobe-only" supprimés.
+    - Le script exécute user‑sync.exe en mode test et analyse sa sortie pour extraire le nombre d’utilisateurs "Adobe-only" à supprimer.
     - Si ce nombre dépasse un seuil ($Threshold), un email d’alerte est envoyé.
          * Le sujet intègre le nombre d’utilisateurs détectés.
          * Le corps du mail est formaté en HTML avec un tableau présentant :
@@ -16,7 +16,6 @@
     - Aucune sortie n’est renvoyée à la console (adapté aux tâches planifiées).
 
 .NOTES
-    Auteur        : Fabien CHALON
     Date          : 2025-03-06 
     Version       : 1.0
 #>
