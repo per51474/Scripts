@@ -38,8 +38,8 @@ $LogFile = Join-Path $LogDirectory "user-sync_log_$TimeStampFile.log"
 "" | Out-File -FilePath $LogFile -Encoding utf8
 
 # Paramètres généraux de seuil et délai d'attente
-$Threshold = 1              # Seuil d'alerte (nombre d'utilisateurs "Adobe-only" supprimés)
-$WaitTimeSeconds = 7200     # Délai en secondes avant exécution en mode PROD après alerte
+$Threshold = 1              # Seuil d'alerte (correspond au nombre d'utilisateur maximum d'utilisateurs à supprimer sans contrôle humain)
+$WaitTimeSeconds = 7200     # Délai en secondes avant exécution en mode PROD après alerte (délai avant que l'User Sync Tool ne se lance en PROD alors que le threshold a été dépassé). 
 
 # Booléen pour désactiver l'attente en mode test (pour faciliter les tests) $false => le script attend 1 heure afin d'éviter le blocage de l'API
 # si $true => n'attend pas et lance directement le script en PROD
