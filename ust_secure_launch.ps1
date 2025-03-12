@@ -1,29 +1,31 @@
 <#
 .SYNOPSIS
-    Exécution de user‑sync.exe en mode test puis en mode PROD, avec envoi par email du log complet.
+    Exécution de user‑sync.exe en mode test puis en mode PROD, avec envoi par email du log complet (configurable).
 
 .DESCRIPTION
     - Le script exécute user‑sync.exe en mode test et analyse sa sortie pour extraire le nombre d’utilisateurs "Adobe-only" à supprimer.
-    - Si ce nombre dépasse un seuil ($Threshold), un email d’alerte est envoyé.
-         * Le sujet intègre le nombre d’utilisateurs détectés.
-         * Le corps du mail est formaté en HTML avec un tableau présentant :
-              - La date/heure de lancement du script
+    - Si ce nombre dépasse un seuil configurable ($Threshold), un email d’alerte est envoyé.
+         * Le sujet intègre le nombre d’utilisateurs détectés, par exemple : 
+           "Alerte: Adobe User Sync Tool s'apprête à supprimer x utilisateurs".
+         * Le corps du mail est formaté en HTML et détaille :
+              - La date/heure de lancement du script (avec indication "UTC Paris")
               - Le nombre d’utilisateurs détectés (affiché en rouge)
               - Le seuil configuré
-              - La date/heure prévue pour la prochaine exécution (après un délai d’attente paramétrable)
-         * Le log complet (fichier unique généré pour cette exécution) est joint.
-    - Sinon, le script exécute immédiatement user‑sync.exe en mode normal.
-    - Aucune sortie n’est renvoyée à la console (adapté aux tâches planifiées).
+              - La date/heure prévue pour la prochaine exécution (avec indication "UTC Paris")
+         * Le log complet de l’exécution est joint (via une copie temporaire).
+    - Si le seuil n'est pas dépassé, le script attend 1 heure (3600 secondes) avant d'exécuter user‑sync.exe en mode PROD afin de respecter les limitations de l'API Adobe.
+    - Un booléen permet de désactiver le temps d'attente en mode test pour faciliter le débogage.
+    - Aucune sortie n’est affichée à la console (adapté aux tâches planifiées).
 
 .NOTES
-    Date          : 2025-03-06 
-    Version       : 1.0
+    Date    : 2025-03-06
+    Version : 1.4
 #>
 
 #region Paramètres de configuration
 
-# Répertoire de stockage des logs (à créer s'il n'existe pas)
-$LogDirectory = "C:\UserSyncTool\Logs"
+# Répertoire de stockage des logs (création si inexistant)
+$LogDirectory = "C:\Users\Administrateur\Documents\AD to AC\logs"
 if (-not (Test-Path $LogDirectory)) {
     New-Item -Path $LogDirectory -ItemType Directory | Out-Null
 }
@@ -32,32 +34,42 @@ if (-not (Test-Path $LogDirectory)) {
 $TimeStampFile = (Get-Date).ToString("yyyyMMdd_HHmmss")
 $LogFile = Join-Path $LogDirectory "user-sync_log_$TimeStampFile.log"
 
-# Créer un fichier log vide avec encodage UTF-8 (avec BOM)
+# Création d'un fichier log vide en UTF-8 (avec BOM)
 "" | Out-File -FilePath $LogFile -Encoding utf8
 
-# Paramètres de seuil et délai d'attente (modifiable)
-$Threshold = 1            
-$WaitTimeSeconds = 7200    
+# Paramètres généraux de seuil et délai d'attente
+$Threshold = 1              # Seuil d'alerte (nombre d'utilisateurs "Adobe-only" supprimés)
+$WaitTimeSeconds = 7200     # Délai en secondes avant exécution en mode PROD après alerte
 
-# Paramètres SMTP génériques (à adapter selon votre relais SMTP cloud)
+# Booléen pour désactiver l'attente en mode test (pour faciliter les tests) $false => le script attend 1 heure afin d'éviter le blocage de l'API
+# si $true => n'attend pas et lance directement le script en PROD
+$DisableWaitForTest = $false
+
+# Paramètres SMTP – à configurer selon votre environnement
 $SmtpServer   = "127.0.0.1"    # Ex : smtp.protonmail.com ou autre relais cloud
-$SmtpPort     = "587"                  # Port SMTP (587 pour STARTTLS, 465 pour SSL)
-$SmtpUsername = "email@example.com"   # Adresse de l'expéditeur (doit correspondre au compte d'authentification)
-$SmtpToken    = "smtptoken"  
+$SmtpPort     = "1025"                  # Port SMTP (587 pour STARTTLS, 465 pour SSL)
+$SmtpUsername = "username@example.com"   # Adresse de l'expéditeur (doit correspondre au compte d'authentification)
+$SmtpToken    = "password"  
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
 
-# Conversion du jeton en SecureString et création des identifiants
-$SecureToken = ConvertTo-SecureString $SmtpToken -AsPlainText -Force
-$SmtpCredential = New-Object System.Management.Automation.PSCredential ($SmtpUsername, $SecureToken)
+# Options pour l'envoi d'email
+$EnableTls       = $true      # Mettre $false pour désactiver TLS
+$EnableSmtpAuth  = $true      # Mettre $false pour désactiver l'authentification SMTP
 
-# Destinataires de l'email (liste pouvant contenir plusieurs adresses)
-$EmailRecipients = @("destinataire1@example.com", "destinataire2@example.com")
+# Préparation des identifiants SMTP si l'authentification est activée
+if ($EnableSmtpAuth) {
+    $SecureToken    = ConvertTo-SecureString $SmtpToken -AsPlainText -Force
+    $SmtpCredential = New-Object System.Management.Automation.PSCredential ($SmtpUsername, $SecureToken)
+}
+
+# Liste des destinataires (plusieurs adresses possibles)
+$EmailRecipients = @("destinataire1@example.com","destinataire2@example.com")
 
 #endregion Paramètres de configuration
 
 #region Fonctions Utilitaires
 
-# Fonction pour écrire dans le log avec horodatage et mode (TEST ou PROD)
+# Fonction pour écrire dans le log avec horodatage et tag de mode (TEST ou PROD)
 function Write-Log {
     param(
         [Parameter(Mandatory)]
@@ -66,7 +78,6 @@ function Write-Log {
     )
     $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     $logEntry = "$timestamp - $Mode - $Message"
-    # Écriture dans le fichier log avec encodage UTF-8
     Add-Content -Path $LogFile -Value $logEntry -Encoding utf8
 }
 
@@ -74,10 +85,10 @@ function Write-Log {
 
 #region Exécution en Mode Test
 
-# Enregistrer la date/heure de lancement du script
+# Sauvegarder la date/heure de lancement
 $ScriptStartTime = Get-Date
 
-# Exécuter user‑sync.exe en mode test et récupérer la sortie (y compris erreurs)
+# Exécuter user‑sync.exe en mode test et récupérer toute la sortie (y compris erreurs)
 try {
     $TestOutput = & ".\user-sync.exe" -t 2>&1
 }
@@ -86,10 +97,10 @@ catch {
     exit 1
 }
 
-# Enregistrer la sortie du mode test dans le log (avec préfixe "TEST")
+# Enregistrer chaque ligne de la sortie avec le tag "TEST"
 $TestOutput | ForEach-Object { Add-Content -Path $LogFile -Value ("TEST - " + $_) -Encoding utf8 }
 
-# Joindre les lignes pour analyse
+# Assembler la sortie pour analyse
 $TestOutputString = $TestOutput -join "`n"
 
 # Extraire le nombre d'utilisateurs "Adobe-only" supprimés
@@ -107,15 +118,14 @@ Write-Log "Mode test : $NbUsersRemoved utilisateurs Adobe-only détectés pour s
 
 #region Décision et Envoi de l'Email
 
-# Si le nombre détecté dépasse le seuil, envoyer un email d'alerte avec log en pièce jointe
 if ($NbUsersRemoved -gt $Threshold) {
     # Calculer la date/heure prévue pour l'exécution normale
     $NextExecutionTime = $ScriptStartTime.AddSeconds($WaitTimeSeconds)
     
-    # Construire le sujet de l'email en intégrant le nombre détecté
-    $EmailSubject = "Alerte : user‑sync.exe - $NbUsersRemoved utilisateurs détectés"
+    # Sujet de l'email intégrant le nombre d'utilisateurs détectés
+    $EmailSubject = "Alerte: Adobe User Sync Tool s'apprête à supprimer $NbUsersRemoved utilisateurs"
 
-    # Construire le corps de l'email en HTML avec mise en forme
+    # Corps de l'email en HTML avec ajout de "UTC Paris" après les dates
     $EmailBody = @"
 <html>
 <head>
@@ -131,10 +141,10 @@ if ($NbUsersRemoved -gt $Threshold) {
 </head>
 <body>
   <h2>Alerte : Exécution de user‑sync.exe</h2>
-  <p>Le script a été lancé le : <strong>$($ScriptStartTime.ToString("yyyy-MM-dd HH:mm:ss"))</strong></p>
+  <p>Le script a été lancé le : <strong>$($ScriptStartTime.ToString("yyyy-MM-dd HH:mm:ss")) UTC Paris</strong></p>
   <table>
     <tr>
-      <th>Information</th>
+      <th>Informations</th>
       <th>Valeur</th>
     </tr>
     <tr>
@@ -147,7 +157,7 @@ if ($NbUsersRemoved -gt $Threshold) {
     </tr>
     <tr>
       <td>Prochaine exécution prévue</td>
-      <td>$($NextExecutionTime.ToString("yyyy-MM-dd HH:mm:ss"))</td>
+      <td>$($NextExecutionTime.ToString("yyyy-MM-dd HH:mm:ss")) UTC Paris</td>
     </tr>
   </table>
   <p>Veuillez consulter la pièce jointe pour le log complet de cette exécution.</p>
@@ -158,39 +168,60 @@ if ($NbUsersRemoved -gt $Threshold) {
     Write-Log "Nombre d'utilisateurs ($NbUsersRemoved) supérieur au seuil ($Threshold). Envoi d'un email d'alerte." "TEST"
 
     try {
-      # Création de l'objet MailMessage
-      $mailMessage = New-Object System.Net.Mail.MailMessage
-      $mailMessage.From = $SmtpUsername
-      foreach ($recipient in $EmailRecipients) {
-          $mailMessage.To.Add($recipient)
-      }
-      $mailMessage.Subject = $EmailSubject
-      $mailMessage.Body = $EmailBody
-      $mailMessage.IsBodyHtml = $true
-      
-      # Définir l'encodage du sujet et du corps en UTF8
-      $mailMessage.SubjectEncoding = [System.Text.Encoding]::UTF8
-      $mailMessage.BodyEncoding = [System.Text.Encoding]::UTF8
+        # Création d'une copie temporaire du log pour l'attachement
+        $TempLogFile = Join-Path $LogDirectory "temp_log_$TimeStampFile.log"
+        Copy-Item -Path $LogFile -Destination $TempLogFile -Force
 
-      # Ajouter la pièce jointe
-      $attachment = New-Object System.Net.Mail.Attachment($LogFile)
-      $mailMessage.Attachments.Add($attachment)
-      
-      # Configuration du client SMTP
-      $smtpClient = New-Object System.Net.Mail.SmtpClient($SmtpServer, [int]$SmtpPort)
-      $smtpClient.EnableSsl = $true
-      $smtpClient.Credentials = $SmtpCredential
+        # Création de l'objet MailMessage
+        $mailMessage = New-Object System.Net.Mail.MailMessage
+        $mailMessage.From = $SmtpUsername
+        foreach ($recipient in $EmailRecipients) {
+            $mailMessage.To.Add($recipient)
+        }
+        $mailMessage.Subject = $EmailSubject
+        $mailMessage.Body = $EmailBody
+        $mailMessage.IsBodyHtml = $true
+        $mailMessage.SubjectEncoding = [System.Text.Encoding]::UTF8
+        $mailMessage.BodyEncoding = [System.Text.Encoding]::UTF8
 
-      # Envoi de l'email
-      $smtpClient.Send($mailMessage)
-      
-      Write-Log "E-mail d'alerte envoyé avec succès." "TEST"
-  }
-  catch {
-      Write-Log "Échec de l'envoi de l'e-mail d'alerte : $($_.Exception.Message)" "TEST"
-  }
+        # Ajouter le log (copie temporaire) en pièce jointe
+        $attachment = New-Object System.Net.Mail.Attachment($TempLogFile)
+        $mailMessage.Attachments.Add($attachment)
+        
+        # Configuration du client SMTP
+        $smtpClient = New-Object System.Net.Mail.SmtpClient($SmtpServer, [int]$SmtpPort)
+        $smtpClient.EnableSsl = $EnableTls
+        if ($EnableSmtpAuth) {
+            $smtpClient.Credentials = $SmtpCredential
+        }
+        
+        # Envoi de l'email
+        $smtpClient.Send($mailMessage)
+        Write-Log "E-mail d'alerte envoyé avec succès." "TEST"
+        
+        # Libérer les ressources de l'attachement et du message
+        $attachment.Dispose()
+        $mailMessage.Dispose()
+        
+        # Suppression de la copie temporaire
+        Remove-Item -Path $TempLogFile -Force
+    }
+    catch {
+        Write-Log "Échec de l'envoi de l'e-mail d'alerte : $($_.Exception.Message)" "TEST"
+    }
+    
     Write-Log "Attente de $WaitTimeSeconds secondes avant l'exécution en mode PROD." "TEST"
     Start-Sleep -Seconds $WaitTimeSeconds
+}
+else {
+    Write-Log "Nombre d'utilisateurs ($NbUsersRemoved) inférieur ou égal au seuil ($Threshold)." "TEST"
+    if (-not $DisableWaitForTest) {
+        Write-Log "Attente de 3600 secondes (limitation API Adobe) avant exécution en mode PROD." "TEST"
+        Start-Sleep -Seconds 3600
+    }
+    else {
+        Write-Log "Temps d'attente désactivé pour les tests. Passage immédiat en mode PROD." "TEST"
+    }
 }
 
 #endregion Décision et Envoi de l'Email
